@@ -26,7 +26,8 @@
  * Without config the slider spans every level the model supports.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
@@ -102,6 +103,20 @@ function isPrintableText(data: string): boolean {
 		if (code < 0x20 || code === 0x7f) return false;
 	}
 	return true;
+}
+
+// Env-gated trace for phantom-open hunts. Run with PI_EFFORT_DEBUG=1
+// and reproduce, then read $TMPDIR/pi-effort-slider-debug.log.
+function debugLog(event: string, detail?: unknown): void {
+	if (process.env.PI_EFFORT_DEBUG !== "1") return;
+	try {
+		appendFileSync(
+			join(tmpdir(), "pi-effort-slider-debug.log"),
+			`${new Date().toISOString()} ${event}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}\n`,
+		);
+	} catch {
+		// Logging must never break the extension.
+	}
 }
 
 function modelLabel(ctx: ExtensionContext): string {
@@ -211,8 +226,10 @@ class EffortSliderComponent implements Component {
 	handleInput(data: string): void {
 		if (this.finished) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			debugLog("dismiss", "esc");
 			this.close(null);
 		} else if (matchesKey(data, "return")) {
+			debugLog("dismiss", "return");
 			this.close(this.levels[this.index]!);
 		} else if (matchesKey(data, "shift+tab")) {
 			this.cycle();
@@ -225,6 +242,7 @@ class EffortSliderComponent implements Component {
 		} else if (isPrintableText(data)) {
 			// Typing dismisses the slider and lands in the editor,
 			// so the popup never traps normal input.
+			debugLog("dismiss", `typing:${data.length}`);
 			this.onTypeText(data);
 			this.close(null);
 		}
@@ -396,10 +414,14 @@ export default function (pi: ExtensionAPI) {
 	// one would reveal the second looking like a phantom reopen.
 	const cooling = () => Date.now() - lastCloseAt < REOPEN_DEBOUNCE_MS;
 	async function tryOpen(ctx: ExtensionContext): Promise<boolean> {
-		if (sliderOpen || cooling()) return false;
+		if (sliderOpen || cooling()) {
+			debugLog("tryOpen-skip", { sliderOpen });
+			return false;
+		}
 		sliderOpen = true;
 		try {
 			const showed = await openEffortSlider(pi, ctx);
+			debugLog("tryOpen-done", { showed });
 			if (showed) lastCloseAt = Date.now();
 			return showed;
 		} finally {
@@ -424,6 +446,7 @@ export default function (pi: ExtensionAPI) {
 		// UI and must not block new opens.
 		sliderOpen = false;
 		lastCloseAt = 0;
+		debugLog("session_start");
 		if (uninstallInput) {
 			try {
 				uninstallInput();
@@ -436,6 +459,7 @@ export default function (pi: ExtensionAPI) {
 			// Open slider gets the key for effort cycling.
 			if (sliderOpen) return undefined;
 			if (!matchesKey(data, "shift+tab")) return undefined;
+			debugLog("intercept-shift-tab", data);
 			// Inside the cooldown window let the key fall through
 			// to the built-in cycler instead of eating it.
 			if (cooling()) return undefined;
@@ -445,6 +469,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
+		debugLog("session_shutdown");
 		if (uninstallInput) {
 			try {
 				uninstallInput();
