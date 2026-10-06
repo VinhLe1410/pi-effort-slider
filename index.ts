@@ -12,7 +12,7 @@
  * Keys in the slider:
  *   shift+tab         - cycle effort forward (wraps around)
  *   left/right or h/l - change effort (live, animates left to right)
- *   tab or ctrl+p     - cycle model (scoped models first, else available)
+ *   tab               - swallowed, the slider is effort-only
  *   typing            - dismiss the slider, text lands in the editor
  *   enter             - confirm and close
  *   esc               - close (keeps the last live-applied level)
@@ -121,9 +121,9 @@ class EffortSliderComponent implements Component {
 	private config: EffortConfig;
 	private shortModel: string;
 	private onPick: (level: EffortLevel) => void;
-	private onCycleModel: (dir: 1 | -1) => void;
 	private onTypeText: (text: string) => void;
 	private disposed = false;
+	private finished = false;
 
 	constructor(args: {
 		tui: TUI;
@@ -134,7 +134,6 @@ class EffortSliderComponent implements Component {
 		config: EffortConfig;
 		shortModel: string;
 		onPick: (level: EffortLevel) => void;
-		onCycleModel: (dir: 1 | -1) => void;
 		onTypeText: (text: string) => void;
 	}) {
 		this.tui = args.tui;
@@ -145,7 +144,6 @@ class EffortSliderComponent implements Component {
 		this.config = args.config;
 		this.shortModel = args.shortModel;
 		this.onPick = args.onPick;
-		this.onCycleModel = args.onCycleModel;
 		this.onTypeText = args.onTypeText;
 		// Entrance animation: fill sweeps left to right on open.
 		this.displayFill = 0;
@@ -203,35 +201,32 @@ class EffortSliderComponent implements Component {
 		this.tui.requestRender();
 	}
 
-	refreshModel(shortModel: string, levels: EffortLevel[], level: EffortLevel): void {
-		this.shortModel = shortModel;
-		this.levels = levels;
-		const pos = levels.indexOf(level);
-		this.index = pos === -1 ? 0 : pos;
-		this.animateTo(this.targetFill());
-		this.tui.requestRender();
+	private close(result: string | null): void {
+		// Guard against double-dismiss from rapid keys before unmount.
+		if (this.finished) return;
+		this.finished = true;
+		this.done(result);
 	}
 
 	handleInput(data: string): void {
+		if (this.finished) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.done(null);
+			this.close(null);
 		} else if (matchesKey(data, "return")) {
-			this.done(this.levels[this.index]!);
+			this.close(this.levels[this.index]!);
 		} else if (matchesKey(data, "shift+tab")) {
 			this.cycle();
 		} else if (matchesKey(data, "left") || matchesKey(data, "h")) {
 			this.move(-1);
 		} else if (matchesKey(data, "right") || matchesKey(data, "l")) {
 			this.move(1);
-		} else if (matchesKey(data, "tab") || matchesKey(data, "ctrl+p")) {
-			this.onCycleModel(1);
-		} else if (matchesKey(data, "shift+ctrl+p")) {
-			this.onCycleModel(-1);
+		// Plain tab is intentionally swallowed. The slider is
+			// effort-only. Arrows and shift+tab change the level.
 		} else if (isPrintableText(data)) {
 			// Typing dismisses the slider and lands in the editor,
 			// so the popup never traps normal input.
 			this.onTypeText(data);
-			this.done(null);
+			this.close(null);
 		}
 	}
 
@@ -293,7 +288,7 @@ class EffortSliderComponent implements Component {
 			border("│") + truncateToWidth(` ${th.fg("dim", describe(level, this.config))}`, innerW, "...", true) + border("│"),
 		);
 
-		const hints = th.fg("dim", "← → · tab · esc");
+		const hints = th.fg("dim", "← → · ⇧tab · esc");
 		const status = `${th.fg("muted", this.shortModel)} ${th.fg("success", level)}`;
 		const gap = Math.max(1, innerW - 2 - visibleWidth(hints) - visibleWidth(status));
 		lines.push(border("│") + pad(`${hints}${" ".repeat(gap)}${status} `) + border("│"));
@@ -312,10 +307,12 @@ class EffortSliderComponent implements Component {
 	}
 }
 
-async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+// True when the slider actually showed. False on early exits that never
+// displayed anything, so callers only debounce real opens.
+async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify("Effort slider needs interactive mode. Use /thinking <level> instead.", "warning");
-		return;
+		return false;
 	}
 	let agentDir: string | undefined;
 	try {
@@ -325,37 +322,20 @@ async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 	}
 	const config = loadConfig(agentDir);
 
-	// Model candidates for tab cycling: scoped models first, else available snapshot.
-	// Capture model objects once so cycling needs no further registry calls.
-	let candidateModels: { provider: string; id: string }[] = (ctx.scopedModels || []).map(
-		(s) => s.model as unknown as { provider: string; id: string },
-	);
-	if (candidateModels.length === 0) {
-		try {
-			const getAvailable = (ctx.modelRegistry as unknown as { getAvailable?: () => unknown[] }).getAvailable;
-			if (typeof getAvailable === "function") {
-				candidateModels = (getAvailable.call(ctx.modelRegistry) || []) as { provider: string; id: string }[];
-			}
-		} catch {
-			candidateModels = [];
-		}
-	}
-	const candidates = candidateModels.map((m) => `${m.provider}/${m.id}`);
+	// The model is fixed for the life of the popup. The overlay owns
+	// focus, so no model switch can happen underneath it.
 	const currentName = modelLabel(ctx);
-	let modelPos = Math.max(0, candidates.indexOf(currentName));
-	let liveModel = ctx.model as { provider: string; id: string } | undefined;
+	const shortId = (ctx.model as { id?: string } | undefined)?.id ?? "no model";
 
-	const levels = resolveLevels(supportedLevels(liveModel), config);
+	const levels = resolveLevels(supportedLevels(ctx.model), config);
 	const current = pi.getThinkingLevel() as EffortLevel;
 	let startIndex = levels.indexOf(current);
 	if (startIndex === -1) startIndex = 0;
 
 	if (levels.length <= 1 && levels[0] === "off") {
 		ctx.ui.notify("Current model does not support reasoning effort.", "warning");
-		return;
+		return false;
 	}
-
-	let slider: EffortSliderComponent | undefined;
 
 	const result = await ctx.ui.custom<string | null>(
 		(tui, theme, _kb, done) => {
@@ -366,7 +346,7 @@ async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 				levels,
 				initialIndex: startIndex,
 				config,
-				shortModel: liveModel?.id ?? "no model",
+				shortModel: shortId,
 				onPick: (lvl) => {
 					pi.setThinkingLevel(lvl as never);
 				},
@@ -388,27 +368,7 @@ async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 						// Editor writeback is best effort. The slider still closes.
 					}
 				},
-				onCycleModel: (dir) => {
-					if (candidateModels.length <= 1) {
-						ctx.ui.notify("No other models to cycle. See /scoped-models.", "info");
-						return;
-					}
-					void (async () => {
-						modelPos = (modelPos + dir + candidateModels.length) % candidateModels.length;
-						const target = candidateModels[modelPos]!;
-						const ok = await pi.setModel(target as never);
-						if (!ok) {
-							ctx.ui.notify(`No auth for ${target.provider}/${target.id}`, "warning");
-							return;
-						}
-						liveModel = target;
-						const refreshed = resolveLevels(supportedLevels(liveModel), config);
-						const lvl = pi.getThinkingLevel() as EffortLevel;
-						slider?.refreshModel(liveModel.id, refreshed, lvl);
-					})();
-				},
 			});
-			slider = comp;
 			return comp;
 		},
 		{
@@ -420,21 +380,50 @@ async function openEffortSlider(pi: ExtensionAPI, ctx: ExtensionContext): Promis
 	);
 
 	if (result) {
-		ctx.ui.notify(`Effort: ${result} · ${liveModel ? `${liveModel.provider}/${liveModel.id}` : currentName}`, "info");
+		ctx.ui.notify(`Effort: ${result} · ${currentName}`, "info");
 	}
+	return true;
 }
 
 export default function (pi: ExtensionAPI) {
 	let uninstallInput: (() => void) | null = null;
 	let sliderOpen = false;
+	let lastCloseAt = 0;
+	const REOPEN_DEBOUNCE_MS = 350;
+
+	// Single flight across every open path. Without this, Shift+Tab plus
+	// Ctrl+Shift+E together could stack two overlays, and closing the top
+	// one would reveal the second looking like a phantom reopen.
+	const cooling = () => Date.now() - lastCloseAt < REOPEN_DEBOUNCE_MS;
+	async function tryOpen(ctx: ExtensionContext): Promise<boolean> {
+		if (sliderOpen || cooling()) return false;
+		sliderOpen = true;
+		try {
+			const showed = await openEffortSlider(pi, ctx);
+			if (showed) lastCloseAt = Date.now();
+			return showed;
+		} finally {
+			sliderOpen = false;
+		}
+	}
 
 	// Shift+Tab is reserved for the built-in thinking cycler, so a plain
 	// registerShortcut for it would be skipped. Intercept it earlier via
 	// raw terminal input and consume it. This shadows the built-in cycle
 	// while the extension is loaded. Rebind app.thinking.cycle in
 	// keybindings.json if both behaviors are wanted.
+	//
+	// The trigger matches only the literal Shift+Tab byte sequence. Cmd
+	// never reaches the pty, so Cmd+Tab app switching sends nothing. A
+	// slider that appears around then is either a held Shift key turning
+	// the switch into Shift+Tab, or a stacked second overlay.
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
+		// Fresh session, fresh state. If a slider was orphaned by a
+		// session replacement mid-dialog, its promise belongs to the old
+		// UI and must not block new opens.
+		sliderOpen = false;
+		lastCloseAt = 0;
 		if (uninstallInput) {
 			try {
 				uninstallInput();
@@ -444,16 +433,13 @@ export default function (pi: ExtensionAPI) {
 			uninstallInput = null;
 		}
 		uninstallInput = ctx.ui.onTerminalInput((data) => {
+			// Open slider gets the key for effort cycling.
 			if (sliderOpen) return undefined;
 			if (!matchesKey(data, "shift+tab")) return undefined;
-			sliderOpen = true;
-			void (async () => {
-				try {
-					await openEffortSlider(pi, ctx);
-				} finally {
-					sliderOpen = false;
-				}
-			})();
+			// Inside the cooldown window let the key fall through
+			// to the built-in cycler instead of eating it.
+			if (cooling()) return undefined;
+			void tryOpen(ctx);
 			return { consume: true };
 		});
 	});
@@ -468,6 +454,7 @@ export default function (pi: ExtensionAPI) {
 			uninstallInput = null;
 		}
 		sliderOpen = false;
+		lastCloseAt = 0;
 	});
 
 	pi.registerCommand("effort", {
@@ -484,7 +471,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Effort: ${lvl}`, "info");
 				return;
 			}
-			await openEffortSlider(pi, ctx);
+			await tryOpen(ctx);
 		},
 	});
 
@@ -496,7 +483,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerShortcut(Key.ctrlShift("e"), {
 		description: "Open effort slider",
 		handler: async (ctx) => {
-			await openEffortSlider(pi, ctx);
+			await tryOpen(ctx);
 		},
 	});
 }
