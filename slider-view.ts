@@ -8,9 +8,12 @@ export class EffortSliderComponent implements Component {
 	private theme: Theme;
 	private levels: EffortLevel[];
 	private index: number;
+	private displayFill: number;
+	private animTimer: ReturnType<typeof setInterval> | null = null;
 	private config: EffortConfig;
 	private shortModel: string;
 	private onPick: (level: EffortLevel) => void;
+	private disposed = false;
 
 	constructor(args: {
 		tui: TUI;
@@ -28,6 +31,9 @@ export class EffortSliderComponent implements Component {
 		this.config = args.config;
 		this.shortModel = args.shortModel;
 		this.onPick = args.onPick;
+		// Animate fill from empty on open.
+		this.displayFill = 0;
+		this.animateTo(this.targetFill());
 	}
 
 	get level(): EffortLevel {
@@ -39,10 +45,40 @@ export class EffortSliderComponent implements Component {
 		return this.index / (this.levels.length - 1);
 	}
 
+	private animateTo(target: number): void {
+		if (this.animTimer) {
+			clearInterval(this.animTimer);
+			this.animTimer = null;
+		}
+		const from = this.displayFill;
+		if (Math.abs(from - target) < 0.001) {
+			this.displayFill = target;
+			this.tui.requestRender();
+			return;
+		}
+		const durationMs = 160;
+		const started = Date.now();
+		this.animTimer = setInterval(() => {
+			if (this.disposed) {
+				if (this.animTimer) clearInterval(this.animTimer);
+				return;
+			}
+			const t = Math.min(1, (Date.now() - started) / durationMs);
+			const eased = 1 - Math.pow(1 - t, 3);
+			this.displayFill = from + (target - from) * eased;
+			this.tui.requestRender();
+			if (t >= 1 && this.animTimer) {
+				clearInterval(this.animTimer);
+				this.animTimer = null;
+			}
+		}, 33);
+	}
+
 	move(dir: -1 | 1): void {
 		const next = Math.min(this.levels.length - 1, Math.max(0, this.index + dir));
 		if (next === this.index) return;
 		this.index = next;
+		this.animateTo(this.targetFill());
 		this.onPick(this.levels[this.index]!);
 		this.tui.requestRender();
 	}
@@ -50,6 +86,7 @@ export class EffortSliderComponent implements Component {
 	cycle(): void {
 		if (this.levels.length <= 1) return;
 		this.index = (this.index + 1) % this.levels.length;
+		this.animateTo(this.targetFill());
 		this.onPick(this.levels[this.index]!);
 		this.tui.requestRender();
 	}
@@ -59,13 +96,14 @@ export class EffortSliderComponent implements Component {
 		this.levels = levels;
 		const pos = levels.indexOf(level);
 		this.index = pos === -1 ? 0 : pos;
+		this.animateTo(this.targetFill());
 		this.tui.requestRender();
 	}
 
 	private dotsLine(innerW: number): string {
 		// One bullet per column. U+2022 renders in every font.
 		const total = innerW;
-		const filled = Math.round(this.targetFill() * total);
+		const filled = Math.round(this.displayFill * total);
 		let out = "";
 		for (let i = 0; i < total; i++) {
 			out += i < filled ? this.theme.fg("success", "•") : this.theme.fg("dim", "•");
@@ -124,5 +162,11 @@ export class EffortSliderComponent implements Component {
 
 	invalidate(): void {}
 
-	dispose(): void {}
+	dispose(): void {
+		this.disposed = true;
+		if (this.animTimer) {
+			clearInterval(this.animTimer);
+			this.animTimer = null;
+		}
+	}
 }
