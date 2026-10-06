@@ -119,6 +119,14 @@ function debugLog(event: string, detail?: unknown): void {
 	}
 }
 
+// Kitty-protocol key-release events (CSI u ...:3u) must never act.
+// The debug log proved the phantom: press opened, Enter closed, and the
+// late Shift+Tab release reopened 539ms later. Releases also land after
+// app switches, which is the Cmd+Tab phantom. Releases are swallowed.
+function isReleaseEvent(data: string): boolean {
+	return /^\x1b\[.*:3u$/.test(data);
+}
+
 function modelLabel(ctx: ExtensionContext): string {
 	const model = ctx.model as { provider?: string; id?: string } | undefined;
 	if (!model) return "no model";
@@ -232,7 +240,9 @@ class EffortSliderComponent implements Component {
 			debugLog("dismiss", "return");
 			this.close(this.levels[this.index]!);
 		} else if (matchesKey(data, "shift+tab")) {
-			this.cycle();
+			// Press cycles once. The release is swallowed so a single
+			// press can never double-step.
+			if (!isReleaseEvent(data)) this.cycle();
 		} else if (matchesKey(data, "left") || matchesKey(data, "h")) {
 			this.move(-1);
 		} else if (matchesKey(data, "right") || matchesKey(data, "l")) {
@@ -460,6 +470,10 @@ export default function (pi: ExtensionAPI) {
 			if (sliderOpen) return undefined;
 			if (!matchesKey(data, "shift+tab")) return undefined;
 			debugLog("intercept-shift-tab", data);
+			// Swallow releases without opening. The press already
+			// acted. Passing a release down would also let the
+			// built-in cycler fire on it.
+			if (isReleaseEvent(data)) return { consume: true };
 			// Inside the cooldown window let the key fall through
 			// to the built-in cycler instead of eating it.
 			if (cooling()) return undefined;
