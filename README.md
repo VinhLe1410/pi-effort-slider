@@ -22,10 +22,9 @@ The extension consumes that key before the built-in thinking cycler sees it, so 
 | --- | --- |
 | shift+tab | Open the slider, inside it cycles effort forward |
 | left/right or h/l | Change effort, applied live |
-| tab | Swallowed, the slider is effort-only |
-| typing | Dismisses the slider, text lands in the editor |
-| enter | Confirm and close |
-| esc | Close, keeps last applied level |
+| typing or enter | Dismisses the slider, input flows to the editor |
+| esc or ctrl+c | Dismisses the slider, consumed so runs keep going |
+| everything else | Passes through, shortcuts keep working |
 
 Only one slider can be open at a time across every open path. Reopens
 within a beat of closing are ignored, so key repeats and stacked
