@@ -23,9 +23,9 @@
  */
 
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRelease, Key, matchesKey } from "@earendil-works/pi-tui";
 import { ALL_LEVELS, loadConfig, modelNames, resolveLevels, supportedLevels, type EffortConfig, type EffortLevel } from "./effort.js";
-import { isPrintableText, isReleaseEvent } from "./keys.js";
+import { isPrintableText } from "./keys.js";
 import { EffortSliderComponent } from "./slider-view.js";
 
 interface SliderSession {
@@ -112,7 +112,7 @@ function openEffortSlider(
 			}
 			if (matchesKey(data, "shift+tab")) {
 				// Cycle once per press. Ignore the release event.
-				if (!isReleaseEvent(data)) comp!.cycle();
+				if (!isKeyRelease(data)) comp!.cycle();
 				return { consume: true };
 			}
 			if (matchesKey(data, "left") || matchesKey(data, "h")) {
@@ -205,7 +205,7 @@ export default function (pi: ExtensionAPI) {
 			if (active) return active.route(data);
 			if (!matchesKey(data, "shift+tab")) return undefined;
 			// Ignore releases. The press already acted. Passing a release through triggers the built-in cycler.
-			if (isReleaseEvent(data)) return { consume: true };
+			if (isKeyRelease(data)) return { consume: true };
 			// During cooldown pass the key to the built-in cycler.
 			if (cooling()) return undefined;
 			void tryOpen(ctx);

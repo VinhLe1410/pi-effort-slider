@@ -7,8 +7,3 @@ export function isPrintableText(data: string): boolean {
 	}
 	return true;
 }
-
-// Ignore Kitty release events. They end in :3u. A release once reopened the slider after Enter. Releases also arrive after app switches.
-export function isReleaseEvent(data: string): boolean {
-	return /^\x1b\[.*:3u$/.test(data);
-}

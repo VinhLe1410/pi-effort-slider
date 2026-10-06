@@ -8,11 +8,11 @@ export const ALL_LEVELS: EffortLevel[] = ["off", "minimal", "low", "medium", "hi
 
 export const DEFAULT_DESCRIPTIONS: Record<EffortLevel, string> = {
 	off: "No reasoning.",
-	minimal: "Very brief reasoning (~1k tokens).",
-	low: "Light reasoning (~2k tokens).",
-	medium: "Default for most tasks, balancing quality, speed, and cost.",
-	high: "Deep reasoning (~16k tokens).",
-	xhigh: "Extra-high reasoning (~32k tokens).",
+	minimal: "Very brief reasoning.",
+	low: "Light reasoning.",
+	medium: "Default for most tasks.",
+	high: "Deep reasoning.",
+	xhigh: "Extra-deep reasoning.",
 	max: "Maximum reasoning.",
 };
 
