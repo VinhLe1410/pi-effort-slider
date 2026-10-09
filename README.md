@@ -2,6 +2,8 @@
 
 Amp-style reasoning effort slider for [Pi](https://pi.dev). A bottom-right popup with a dotted track that sweeps left to right. It spans every thinking level the current model supports.
 
+https://github.com/user-attachments/assets/94a3e45a-5bae-45a0-a100-d89a254f3330
+
 ## Install
 
 ```bash
@@ -46,8 +48,3 @@ Optional `~/.pi/agent/effort-slider.json`:
 ```
 
 Configured levels are intersected with what the current model supports. Without config the slider spans every level the model supports.
-
-## Known gaps
-
-- The extension API `setThinkingLevel` has no persist flag, so saving a default still needs `/thinking` plus `Ctrl+S`.
-- Tab cycling follows scoped models, not the exact `Ctrl+P` order.
